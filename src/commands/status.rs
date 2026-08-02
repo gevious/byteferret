@@ -23,6 +23,13 @@ fn short(id: &str) -> String {
     id.chars().take(7).collect()
 }
 
+/// The token to paste into a `pair`/`unpair` command for a peer: its local alias
+/// when one is set — what the user recognises and typed themselves — otherwise a
+/// short id prefix. `resolve_peer` accepts either, so both forms work verbatim.
+fn peer_ref(config: &crate::config::Config, id: &str) -> String {
+    config.alias_for(id).map(str::to_string).unwrap_or_else(|| short(id))
+}
+
 /// How a peer's device id appears in the peer list: the full id under `-v`,
 /// otherwise just its first segment with an ellipsis.
 fn id_display(id: &str, verbose: bool) -> String {
@@ -241,8 +248,9 @@ pub fn status(verbose: bool) -> Result<()> {
             let name = sanitize(&info.name);
             let named = if name.is_empty() { String::new() } else { format!(" ({name})") };
             say(&format!("  - {pid}{named}"));
-            say(&format!("      accept:  byteferret pair {} --accept", short(pid)));
-            say(&format!("      reject:  byteferret pair {} --reject", short(pid)));
+            let who = sanitize(&peer_ref(&ctx.config, pid));
+            say(&format!("      accept:  byteferret pair {who} --accept"));
+            say(&format!("      reject:  byteferret pair {who} --reject"));
         }
     }
 
@@ -253,11 +261,11 @@ pub fn status(verbose: bool) -> Result<()> {
             for (did, offer) in &pf.offered_by {
                 let label = sanitize(&offer.label);
                 let named = if label.is_empty() { String::new() } else { format!(" \"{label}\"") };
-                let by = ctx.config.alias_for(did).map(str::to_string).unwrap_or_else(|| short(did));
-                say(&format!("  - {}{named} — offered by {}", sanitize(folder_name(fid)), sanitize(&by)));
+                let by = sanitize(&peer_ref(&ctx.config, did));
+                say(&format!("  - {}{named} — offered by {}", sanitize(folder_name(fid)), by));
                 say(&format!(
                     "      accept:  byteferret pair {} --accept --folder {}",
-                    short(did),
+                    by,
                     sanitize(folder_name(fid))
                 ));
             }
