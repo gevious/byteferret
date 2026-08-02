@@ -526,8 +526,55 @@ pub fn folder_config(id: &str, label: &str, path: &str, peers: &[String]) -> Val
         "fsWatcherDelayS": 5,
         "rescanIntervalS": 60,
         "devices": devices,
-        "versioning": { "type": "" }, // v1: minimal on desktop; the hub is canonical history
+        "versioning": staggered_versioning(),
     })
+}
+
+/// Local file history, kept in each folder's `.stversions/`.
+///
+/// Syncthing's staggered scheme thins versions out as they age. The *bands are
+/// fixed in Syncthing and cannot be tuned* — they are always: one version per
+/// 30s for the first hour, per hour for the first day, per day for the first
+/// 30 days, then per week up to `maxAge`. `maxAge = 0` keeps them forever.
+///
+/// This is the closest built-in fit to "iteration-level recently, thinning to
+/// daily / weekly / effectively-monthly as it ages, retained indefinitely". It
+/// differs from an ideal curve in two ways worth knowing: sub-hour granularity
+/// lasts only the first hour (not a full week), and the coarsest retained
+/// cadence is weekly (there is no monthly band).
+fn staggered_versioning() -> Value {
+    json!({
+        "type": "staggered",
+        "params": { "maxAge": "0" }, // 0 = keep versions forever
+    })
+}
+
+/// Turn on staggered local history for any registered folder that has none.
+///
+/// `folder_config` only runs when a folder is first created, so folders made
+/// before history was enabled (or with it explicitly off) keep nothing. This
+/// upgrades them in place — reading each folder, setting the staggered scheme,
+/// and writing it back — while leaving any folder that already versions
+/// untouched. Returns the display names of the folders that were changed.
+pub fn enable_history_on_folders(client: &Client) -> Result<Vec<String>> {
+    let mut changed = Vec::new();
+    for mut folder in client.get_folders()? {
+        let versions = folder
+            .get("versioning")
+            .and_then(|v| v.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|t| !t.is_empty());
+        if versions {
+            continue;
+        }
+        let Some(id) = folder.get("id").and_then(Value::as_str).map(str::to_string) else {
+            continue;
+        };
+        folder["versioning"] = staggered_versioning();
+        client.put_folder(&folder)?;
+        changed.push(folder_name(&id).to_string());
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]

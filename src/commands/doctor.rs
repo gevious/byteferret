@@ -2,7 +2,8 @@
 //! (FR-27): the managed Syncthing binary, config + secrets (and their
 //! permissions), the running process + REST endpoint, the vault folder, peer
 //! connectivity, and any sync-conflict files. With `--fix` it applies the safe,
-//! obvious repairs (tighten secrets permissions, start a stopped agent).
+//! obvious repairs (tighten secrets permissions, start a stopped agent, enable
+//! local file history on folders that lack it).
 //!
 //! Exit status is non-zero when any check FAILs, so `doctor` is usable in
 //! scripts and CI as a readiness gate.
@@ -107,6 +108,15 @@ fn apply_fixes(paths: &Paths) -> Vec<String> {
     };
     if !running && ensure_started().is_ok() {
         done.push("started the agent".to_string());
+    }
+
+    // 3. Turn on local file history for folders created before it was enabled.
+    if let Ok(ctx) = ensure_started() {
+        if let Ok(upgraded) = crate::agent::enable_history_on_folders(&ctx.client) {
+            for name in upgraded {
+                done.push(format!("enabled file history on '{}'", sanitize(&name)));
+            }
+        }
     }
     done
 }
@@ -233,6 +243,30 @@ fn build_checks(paths: &Paths) -> Vec<Check> {
                 "folders",
                 format!("{} registered", folders.len()),
             ));
+
+            // Folders created before versioning was enabled keep no history.
+            let no_history: Vec<String> = folders
+                .iter()
+                .filter(|f| {
+                    f.get("versioning")
+                        .and_then(|v| v.get("type"))
+                        .and_then(|t| t.as_str())
+                        .is_none_or(|t| t.is_empty())
+                })
+                .filter_map(|f| f.get("id").and_then(|v| v.as_str()).map(|id| crate::agent::folder_name(id).to_string()))
+                .collect();
+            if no_history.is_empty() {
+                checks.push(Check::new(Level::Ok, "file history", "staggered on all folders"));
+            } else {
+                checks.push(
+                    Check::new(
+                        Level::Warn,
+                        "file history",
+                        format!("{} folder(s) keep no local history: {}", no_history.len(), no_history.join(", ")),
+                    )
+                    .with_hint("run `byteferret doctor --fix` to enable staggered versioning"),
+                );
+            }
         } else {
             checks.push(
                 Check::new(
