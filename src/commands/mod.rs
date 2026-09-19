@@ -1,5 +1,6 @@
 pub mod alias;
 pub mod doctor;
+pub mod history;
 pub mod init;
 pub mod logs;
 pub mod pair;

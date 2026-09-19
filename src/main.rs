@@ -98,6 +98,30 @@ enum Cmd {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// List archived versions of a folder's files (from a paired device's changes)
+    History {
+        /// Folder name (or an unambiguous prefix) to look in
+        #[arg(value_name = "FOLDER")]
+        folder: String,
+        /// Limit to one file (path relative to the folder, or just its name)
+        #[arg(value_name = "FILE")]
+        file: Option<String>,
+    },
+    /// Restore a file to an earlier archived version (the current copy is kept too)
+    Restore {
+        /// Folder name (or an unambiguous prefix) the file lives in
+        #[arg(value_name = "FOLDER")]
+        folder: String,
+        /// File to restore (path relative to the folder, or just its name)
+        #[arg(value_name = "FILE")]
+        file: String,
+        /// Which version to bring back (a time from `history`); newest if omitted
+        #[arg(long, value_name = "TIME")]
+        at: Option<String>,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Show agent health, this device's id, peers, folders, sync state
     Status {
         /// Show full device ids instead of the short first segment
@@ -193,6 +217,10 @@ fn main() {
         }
         Cmd::Unpair { folder, with, yes } => {
             commands::unpair::unpair(folder, with.as_deref(), *yes)
+        }
+        Cmd::History { folder, file } => commands::history::history(folder, file.as_deref()),
+        Cmd::Restore { folder, file, at, yes } => {
+            commands::history::restore(folder, file, at.as_deref(), *yes)
         }
         Cmd::Status { verbose } => commands::status::status(*verbose),
         Cmd::Version => commands::version::version(),

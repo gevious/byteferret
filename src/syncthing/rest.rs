@@ -185,6 +185,25 @@ impl Client {
         self.get_typed(&format!("/rest/db/status?folder={}", urlencode(id)))
     }
 
+    // --- file history (.stversions) ---
+
+    /// Every archived version Syncthing holds for a folder, as a map of file path
+    /// (relative to the folder root, forward-slashed) to the list of versions.
+    /// Each version carries an RFC3339 `versionTime` that is the tag used to
+    /// restore it. Empty object when the folder has no history yet.
+    pub fn folder_versions(&self, id: &str) -> Result<Value> {
+        self.req("GET", &format!("/rest/folder/versions?folder={}", urlencode(id)), None)
+    }
+
+    /// Restore archived versions: `picks` maps each file path to the exact
+    /// `versionTime` to bring back. Syncthing archives whatever is currently at
+    /// that path before overwriting it, so the restore is itself reversible.
+    /// Returns Syncthing's per-file result map — an empty error string against a
+    /// file means it was restored, a non-empty one is why it was not.
+    pub fn restore_versions(&self, id: &str, picks: &Value) -> Result<Value> {
+        self.req("POST", &format!("/rest/folder/versions?folder={}", urlencode(id)), Some(picks))
+    }
+
     /// How complete our folder is on a specific peer — the check that reveals a
     /// peer connected but not actually sharing the vault back.
     pub fn folder_completion(&self, folder: &str, device: &str) -> Result<Completion> {
