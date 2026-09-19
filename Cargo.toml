@@ -1,6 +1,6 @@
 [package]
 name = "byteferret"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "P2P document vault desktop agent — orchestrates Syncthing for peer-to-peer sync across your machines."
