@@ -228,6 +228,13 @@ impl Client {
         self.req("PUT", &format!("/rest/config/devices/{id}"), Some(device)).map(|_| ())
     }
 
+    /// Remove a device from Syncthing's configuration. Syncthing removes the
+    /// device from its cluster membership, but folder membership is stored on
+    /// each folder and must be removed by the caller first.
+    pub fn delete_device(&self, id: &str) -> Result<()> {
+        self.req("DELETE", &format!("/rest/config/devices/{id}"), None).map(|_| ())
+    }
+
     // --- cluster / connections ---
 
     pub fn pending_devices(&self) -> Result<BTreeMap<String, PendingDevice>> {

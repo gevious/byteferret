@@ -52,9 +52,9 @@ struct FolderInfo {
 }
 
 impl FolderInfo {
-    /// The user-facing name — the id with its invisible uniqueness suffix removed.
+    /// The local label; unlike the folder id, it can differ on each device.
     fn name(&self) -> &str {
-        crate::agent::folder_name(&self.id)
+        if self.label.is_empty() { crate::agent::folder_name(&self.id) } else { &self.label }
     }
 }
 

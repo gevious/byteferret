@@ -149,6 +149,10 @@ A fuller two-machine walkthrough (`RUN-TWO-DESKTOPS.md`) and the product vision
 | `byteferret pair --with <id> [--folder <name>]` | Pair with a machine and share a folder (the sole folder if just one) |
 | `byteferret pair <id> --accept \| --reject [--folder <name> \| --all-folders]` | Approve/decline a machine, or one of its folders |
 | `byteferret unpair <name> [--with <peer>]` | Stop sharing a folder — from one peer with `--with`, else remove it here entirely (confirms first; files kept) |
+| `byteferret disconnect <device>` | Remove a paired device and withdraw every folder shared with it |
+| `byteferret rename <folder> <new-name>` | Rename a folder locally; the shared folder id, path, and other devices are unchanged |
+| `byteferret restore <folder> <file> [--at <time>]` | Restore an archived version |
+| `byteferret restore --all` | From inside a registered folder, restore every file with history |
 | `byteferret alias <id> <name>` | Label a device locally (usable as `<id>`; `--remove` to clear, no args to list) |
 | `byteferret status [-v]` | Agent health, hostname + device ID, peers & folders, requests, conflicts (`-v` = full device IDs) |
 | `byteferret doctor [--fix]` | Diagnose (and optionally repair) the setup |

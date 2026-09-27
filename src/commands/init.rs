@@ -109,8 +109,13 @@ pub fn init(target: &str, existing: bool, label: Option<&str>) -> Result<()> {
             .unwrap_or(false)
     });
 
-    // The visible, user-facing name: from --label, else the directory name.
-    let name = folder_id_slug(label.unwrap_or(&dir_name));
+    // The visible, user-facing name: preserve a local rename when re-running
+    // init without an explicit --label; otherwise use the requested label or
+    // directory name.
+    let name = label
+        .map(folder_id_slug)
+        .or_else(|| registered.and_then(|f| f.get("label")).and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| folder_id_slug(&dir_name));
 
     // Folder names are unique on this machine, so the invisible suffix never
     // produces two folders a user can't tell apart. A re-init of the same path

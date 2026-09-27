@@ -87,7 +87,17 @@ pub fn history(folder: &str, file: Option<&str>) -> Result<()> {
 }
 
 /// `byteferret restore <folder> <file> [--at <time>]` — bring a version back.
-pub fn restore(folder: &str, file: &str, at: Option<&str>, yes: bool) -> Result<()> {
+/// With `--all`, restore every file with history in the folder registered at
+/// the current working directory.
+pub fn restore(folder: Option<&str>, file: Option<&str>, all: bool, at: Option<&str>, yes: bool) -> Result<()> {
+    if all {
+        if folder.is_some() || file.is_some() {
+            bail!("--all cannot be combined with a folder or file");
+        }
+        return restore_all(at, yes);
+    }
+    let folder = folder.ok_or_else(|| anyhow::anyhow!("restore requires <folder> and <file>, or --all"))?;
+    let file = file.ok_or_else(|| anyhow::anyhow!("restore requires <folder> and <file>, or --all"))?;
     let ctx = ensure_started()?;
     let id = resolve_folder(&ctx.client, folder)?;
     let name = folder_name(&id).to_string();
@@ -95,35 +105,62 @@ pub fn restore(folder: &str, file: &str, at: Option<&str>, yes: bool) -> Result<
 
     let (path, versions) = find_file(&files, file)?;
     let pick = choose_version(path, versions, at)?;
-
-    if !yes && !confirm_restore(path, &pick.tag)? {
-        say("Aborted — nothing changed.");
-        emit(&json!({ "ok": true, "action": "restore", "restored": false }));
-        return Ok(());
-    }
-
-    // Syncthing takes a map of file → versionTime and archives the current copy
-    // before overwriting, so this restore can itself be rolled back afterwards.
     let picks = json!({ path.as_str(): pick.tag });
-    let result = ctx.client.restore_versions(&id, &picks)?;
-    if let Some(err) = result.get(path.as_str()).and_then(Value::as_str) {
-        if !err.is_empty() {
-            bail!("Syncthing could not restore '{}': {}", sanitize(path), sanitize(err));
-        }
-    }
-
-    say(&format!(
-        "Restored '{}' in '{}' to its version from {}.",
-        sanitize(path),
-        sanitize(&name),
-        display_time(&pick.tag)
-    ));
-    say("  the copy it replaced was archived, so you can restore back to it the same way");
+    let restored = restore_picks(&ctx, &id, &name, &picks, yes)?;
     emit(&json!({
-        "ok": true, "action": "restore", "restored": true,
+        "ok": true, "action": "restore", "restored": restored,
         "name": name, "folderId": id, "file": path, "time": pick.tag,
     }));
     Ok(())
+}
+
+fn restore_all(at: Option<&str>, yes: bool) -> Result<()> {
+    let ctx = ensure_started()?;
+    let cwd = std::fs::canonicalize(std::env::current_dir()?)?;
+    let folder = ctx.client.get_folders()?.into_iter().find(|f| {
+        f.get("path").and_then(Value::as_str)
+            .and_then(|p| std::fs::canonicalize(p).ok()) == Some(cwd.clone())
+    }).ok_or_else(|| anyhow::anyhow!("current directory is not a registered ByteFerret folder"))?;
+    let id = folder.get("id").and_then(Value::as_str).ok_or_else(|| anyhow::anyhow!("folder configuration has no id"))?.to_string();
+    let name = folder.get("label").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or_else(|| folder_name(&id)).to_string();
+    let files = load_versions(&ctx, &id)?;
+    if files.is_empty() {
+        say(&format!("No history for '{}' yet.", sanitize(&name)));
+        emit(&json!({ "ok": true, "action": "restore", "all": true, "restored": false, "files": [] }));
+        return Ok(());
+    }
+    let mut picks = serde_json::Map::new();
+    for (path, versions) in &files {
+        picks.insert(path.clone(), json!(choose_version(path, versions, at)?.tag));
+    }
+    if !yes && !confirm_all_restore(&name, picks.len())? {
+        say("Aborted — nothing changed.");
+        emit(&json!({ "ok": true, "action": "restore", "all": true, "restored": false }));
+        return Ok(());
+    }
+    let picks = Value::Object(picks);
+    restore_picks(&ctx, &id, &name, &picks, true)?;
+    say(&format!("Restored {} file(s) in '{}'.", files.len(), sanitize(&name)));
+    emit(&json!({ "ok": true, "action": "restore", "all": true, "restored": true, "name": name, "folderId": id, "files": files.keys().collect::<Vec<_>>() }));
+    Ok(())
+}
+
+fn restore_picks(ctx: &Context, id: &str, name: &str, picks: &Value, confirmed: bool) -> Result<bool> {
+    if !confirmed {
+        let (path, tag) = picks.as_object().and_then(|m| m.iter().next()).map(|(p, t)| (p.as_str(), t.as_str().unwrap_or(""))).unwrap_or(("file", ""));
+        if !confirm_restore(path, tag)? { say("Aborted — nothing changed."); return Ok(false); }
+    }
+    let result = ctx.client.restore_versions(id, picks)?;
+    if let Some((path, err)) = result.as_object().into_iter().flat_map(|m| m.iter()).find(|(_, v)| v.as_str().is_some_and(|s| !s.is_empty())) {
+        bail!("Syncthing could not restore '{}': {}", sanitize(path), sanitize(err.as_str().unwrap_or("unknown error")));
+    }
+    if picks.as_object().is_some_and(|m| m.len() == 1) {
+        if let Some((path, tag)) = picks.as_object().and_then(|m| m.iter().next()).and_then(|(p, t)| Some((p, t.as_str()?))) {
+            say(&format!("Restored '{}' in '{}' to its version from {}.", sanitize(path), sanitize(name), display_time(tag)));
+            say("  the copy it replaced was archived, so you can restore back to it the same way");
+        }
+    }
+    Ok(true)
 }
 
 /// Pull the folder's versions from Syncthing into `path → [newest … oldest]`.
@@ -213,6 +250,18 @@ fn choose_version<'a>(path: &str, versions: &'a [Version], at: Option<&str>) -> 
             bail!("'{}' matches {} versions — be more precise:{}", sanitize(when), many.len(), times)
         }
     }
+}
+
+/// Confirm the broad restore operation.
+fn confirm_all_restore(name: &str, count: usize) -> Result<bool> {
+    if is_json_mode() {
+        bail!("refusing to restore all files in '{name}' without --yes (there is no prompt in --json mode)");
+    }
+    print!("Restore the newest archived version of {count} file(s) in '{}'? Current copies are archived first. [y/N] ", sanitize(name));
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(matches!(line.trim().chars().next(), Some('y') | Some('Y')))
 }
 
 /// Restoring overwrites the file that is there now. Syncthing archives that copy

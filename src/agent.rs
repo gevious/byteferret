@@ -282,52 +282,50 @@ pub fn folder_name(id: &str) -> &str {
 /// exists on this machine. Names are unique, so an exact name match is decisive;
 /// otherwise we accept an unambiguous prefix and refuse an ambiguous one.
 pub fn resolve_folder(client: &Client, wanted: &str) -> Result<String> {
-    let ids: Vec<String> = client
-        .get_folders()?
-        .iter()
-        .filter_map(|f| f.get("id").and_then(Value::as_str).map(str::to_string))
-        .collect();
+    let folders = client.get_folders()?;
+    let display = |f: &Value| {
+        f.get("label").and_then(Value::as_str)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .or_else(|| f.get("id").and_then(Value::as_str).map(|id| folder_name(id).to_string()))
+            .unwrap_or_default()
+    };
 
-    // Exact match on the visible name or the full id wins outright.
-    if let Some(id) = ids
-        .iter()
-        .find(|id| folder_name(id).eq_ignore_ascii_case(wanted) || id.eq_ignore_ascii_case(wanted))
-    {
-        return Ok(id.clone());
+    // Exact match on the local label, derived name, or full id wins outright.
+    if let Some(f) = folders.iter().find(|f| {
+        let id = f.get("id").and_then(Value::as_str).unwrap_or("");
+        display(f).eq_ignore_ascii_case(wanted) || folder_name(id).eq_ignore_ascii_case(wanted)
+            || id.eq_ignore_ascii_case(wanted)
+    }) {
+        return Ok(f.get("id").and_then(Value::as_str).unwrap_or_default().to_string());
     }
 
-    // Otherwise an unambiguous prefix of a name (or id) is enough.
-    let matches: Vec<&String> = ids
-        .iter()
-        .filter(|id| {
-            folder_name(id).to_lowercase().starts_with(&wanted.to_lowercase())
-                || id.to_lowercase().starts_with(&wanted.to_lowercase())
-        })
-        .collect();
+    let wanted_lower = wanted.to_lowercase();
+    let matches: Vec<&Value> = folders.iter().filter(|f| {
+        let id = f.get("id").and_then(Value::as_str).unwrap_or("");
+        display(f).to_lowercase().starts_with(&wanted_lower)
+            || id.to_lowercase().starts_with(&wanted_lower)
+    }).collect();
     match matches.as_slice() {
-        [one] => Ok((*one).clone()),
-        [] => bail!(
-            "no folder here is named '{}'.{}",
-            wanted,
-            list_folders(&ids)
-        ),
-        many => bail!(
-            "'{}' matches {} folders — be more specific.{}",
-            wanted,
-            many.len(),
-            list_folders(&many.iter().map(|s| (*s).clone()).collect::<Vec<_>>())
-        ),
+        [one] => Ok(one.get("id").and_then(Value::as_str).unwrap_or_default().to_string()),
+        [] => bail!("no folder here is named '{}'.{}", wanted, list_folders(&folders)),
+        many => {
+            let matching: Vec<Value> = many.iter().map(|f| (*f).clone()).collect();
+            bail!("'{}' matches {} folders — be more specific.{}", wanted, many.len(), list_folders(&matching))
+        }
     }
 }
 
 /// Names of the folders registered here, for an error hint.
-fn list_folders(ids: &[String]) -> String {
-    if ids.is_empty() {
+fn list_folders(folders: &[Value]) -> String {
+    if folders.is_empty() {
         return "\nNo folders here yet — run `byteferret init <path>`.".to_string();
     }
     let mut s = String::from("\nFolders here:");
-    for id in ids {
-        s.push_str(&format!("\n  {}", folder_name(id)));
+    for f in folders {
+        let id = f.get("id").and_then(Value::as_str).unwrap_or("");
+        let name = f.get("label").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or_else(|| folder_name(id));
+        s.push_str(&format!("\n  {}", name));
     }
     s
 }

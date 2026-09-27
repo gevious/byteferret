@@ -86,6 +86,21 @@ enum Cmd {
         #[arg(long)]
         remove: bool,
     },
+    /// Remove a paired device and stop sharing every folder with it
+    Disconnect {
+        /// Device id, unambiguous prefix, or local alias
+        #[arg(value_name = "DEVICE")]
+        device: String,
+    },
+    /// Rename a folder locally without changing its shared Syncthing identity
+    Rename {
+        /// Current folder name (or an unambiguous prefix)
+        #[arg(value_name = "FOLDER")]
+        folder: String,
+        /// New local folder name
+        #[arg(value_name = "NEW-NAME")]
+        new_name: String,
+    },
     /// Stop sharing a folder — from one machine with --with, or everywhere (files kept)
     Unpair {
         /// Folder name (or an unambiguous prefix) to unpair
@@ -107,14 +122,17 @@ enum Cmd {
         #[arg(value_name = "FILE")]
         file: Option<String>,
     },
-    /// Restore a file to an earlier archived version (the current copy is kept too)
+    /// Restore archived versions (a file, or every file in the current folder)
     Restore {
         /// Folder name (or an unambiguous prefix) the file lives in
         #[arg(value_name = "FOLDER")]
-        folder: String,
+        folder: Option<String>,
         /// File to restore (path relative to the folder, or just its name)
         #[arg(value_name = "FILE")]
-        file: String,
+        file: Option<String>,
+        /// Restore every file with history in the folder registered at the current directory
+        #[arg(long, conflicts_with_all = ["folder", "file"])]
+        all: bool,
         /// Which version to bring back (a time from `history`); newest if omitted
         #[arg(long, value_name = "TIME")]
         at: Option<String>,
@@ -215,12 +233,14 @@ fn main() {
         Cmd::Alias { device, alias, remove } => {
             commands::alias::alias(device.as_deref(), alias.as_deref(), *remove)
         }
+        Cmd::Disconnect { device } => commands::disconnect::disconnect(device),
+        Cmd::Rename { folder, new_name } => commands::rename::rename(folder, new_name),
         Cmd::Unpair { folder, with, yes } => {
             commands::unpair::unpair(folder, with.as_deref(), *yes)
         }
         Cmd::History { folder, file } => commands::history::history(folder, file.as_deref()),
-        Cmd::Restore { folder, file, at, yes } => {
-            commands::history::restore(folder, file, at.as_deref(), *yes)
+        Cmd::Restore { folder, file, all, at, yes } => {
+            commands::history::restore(folder.as_deref(), file.as_deref(), *all, at.as_deref(), *yes)
         }
         Cmd::Status { verbose } => commands::status::status(*verbose),
         Cmd::Version => commands::version::version(),

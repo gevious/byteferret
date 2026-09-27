@@ -1,10 +1,12 @@
 pub mod alias;
 pub mod doctor;
+pub mod disconnect;
 pub mod history;
 pub mod init;
 pub mod logs;
 pub mod pair;
 pub mod publish;
+pub mod rename;
 pub mod service;
 pub mod start;
 pub mod status;
