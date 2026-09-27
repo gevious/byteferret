@@ -91,6 +91,9 @@ enum Cmd {
         /// Device id, unambiguous prefix, or local alias
         #[arg(value_name = "DEVICE")]
         device: String,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Rename a folder locally without changing its shared Syncthing identity
     Rename {
@@ -233,7 +236,7 @@ fn main() {
         Cmd::Alias { device, alias, remove } => {
             commands::alias::alias(device.as_deref(), alias.as_deref(), *remove)
         }
-        Cmd::Disconnect { device } => commands::disconnect::disconnect(device),
+        Cmd::Disconnect { device, yes } => commands::disconnect::disconnect(device, *yes),
         Cmd::Rename { folder, new_name } => commands::rename::rename(folder, new_name),
         Cmd::Unpair { folder, with, yes } => {
             commands::unpair::unpair(folder, with.as_deref(), *yes)
