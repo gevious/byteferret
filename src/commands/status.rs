@@ -58,6 +58,17 @@ impl FolderInfo {
     }
 }
 
+/// A trusted local alias is preferable to a peer-controlled device name.
+fn machine_label(config: &crate::config::Config, peer: &PeerSync) -> String {
+    config.alias_for(&peer.id).map(str::to_string).unwrap_or_else(|| peer.label())
+}
+
+/// The local name for a shared folder id. Folder labels are per-machine, so a
+/// peer's status must use this machine's label, not its id-derived name.
+fn local_folder_name(folders: &[FolderInfo], id: &str) -> String {
+    folders.iter().find(|f| f.id == id).map(|f| f.name().to_string()).unwrap_or_else(|| folder_name(id).to_string())
+}
+
 /// How one (folder, peer) pair renders next to the folder id, e.g.
 /// ` (establishing)` or ` (42%)`; empty when fully in sync or offline.
 fn share_annotation(state: ShareState, completion: f64) -> String {
@@ -184,6 +195,27 @@ pub fn status(verbose: bool) -> Result<()> {
     }
     say(&format!("device id:  {device_id}"));
     say("mode:       p2p");
+    if peers.is_empty() {
+        say("machines:   none — share the device id above and run `byteferret pair --with <id>` on the other machine");
+    } else {
+        say("connected machines:");
+        let mut any_connected = false;
+        for (p, shared) in peers.iter().zip(&shares).filter(|(p, _)| p.connected) {
+            any_connected = true;
+            let label = machine_label(&ctx.config, p);
+            let addr = conns.get(&p.id).map(|c| c.address.clone()).filter(|a| !a.is_empty())
+                .map(|a| format!("  {}", sanitize(&a))).unwrap_or_default();
+            say(&format!("  - {} ({}): {} folder(s) connected{addr}", sanitize(&label), id_display(&p.id, verbose), shared.len()));
+        }
+        if !any_connected { say("  none"); }
+        let disconnected: Vec<_> = peers.iter().zip(&shares).filter(|(p, _)| !p.connected).collect();
+        if !disconnected.is_empty() {
+            say("disconnected machines:");
+            for (p, shared) in disconnected {
+                say(&format!("  - {} ({}): {} folder(s) shared", sanitize(&machine_label(&ctx.config, p)), id_display(&p.id, verbose), shared.len()));
+            }
+        }
+    }
     if folders.is_empty() {
         say("folders:    none — run `byteferret init <path>`");
     } else {
@@ -191,44 +223,18 @@ pub fn status(verbose: bool) -> Result<()> {
         for f in &folders {
             let state = if f.state.is_empty() { "unknown".to_string() } else { f.state.clone() };
             let extra = if f.need_bytes > 0 { format!(" ({} bytes to sync)", f.need_bytes) } else { String::new() };
-            say(&format!(
-                "  - {}  {}  — {state}{extra}, shared with {} peer(s)",
-                sanitize(f.name()),
-                sanitize(&f.path),
-                f.peers.len(),
-            ));
-        }
-    }
-    if peers.is_empty() {
-        say("peers:      none — share the device id above and run `byteferret pair --with <id>` on the other machine");
-    } else {
-        say("peers:");
-        for (p, shared) in peers.iter().zip(&shares) {
-            let addr = conns
-                .get(&p.id)
-                .map(|c| c.address.clone())
-                .filter(|a| !a.is_empty())
-                .map(|a| format!("  {}", sanitize(&a)))
-                .unwrap_or_default();
-            // Prefer a local alias (trusted) over the peer's self-chosen name.
-            let label = ctx.config.alias_for(&p.id).map(str::to_string).unwrap_or_else(|| p.label());
-            say(&format!(
-                "  - {} ({}): {}{addr}",
-                sanitize(&label),
-                id_display(&p.id, verbose),
-                if p.connected { "connected" } else { "disconnected" },
-            ));
-            if shared.is_empty() {
-                say("      no folders shared");
-            } else {
-                for (fid, state, completion) in shared {
-                    say(&format!(
-                        "      {}{}",
-                        sanitize(folder_name(fid)),
-                        share_annotation(*state, *completion)
-                    ));
+            let linked: Vec<String> = f.peers.iter().map(|id| {
+                if let Some((index, p)) = peers.iter().enumerate().find(|(_, p)| p.id == *id) {
+                    let annotation = shares[index].iter().find(|(fid, _, _)| fid == &f.id)
+                        .map(|(_, state, completion)| share_annotation(*state, *completion)).unwrap_or_default();
+                    format!("{}{}", sanitize(&machine_label(&ctx.config, p)), annotation)
+                } else {
+                    format!("{}…", id.chars().take(7).collect::<String>())
                 }
-            }
+            }).collect();
+            let machines = if linked.is_empty() { "not shared".to_string() } else { linked.join(" ") };
+            say(&format!("  - {}: {machines}", sanitize(f.name())));
+            say(&format!("      {} — {state}{extra}", sanitize(&f.path)));
         }
     }
 
@@ -308,7 +314,8 @@ pub fn status(verbose: bool) -> Result<()> {
             "sharing": p.sharing(),
             "shareState": p.share_state().tag(),
             "foldersSynced": shared.iter().map(|(fid, state, completion)| json!({
-                "folder": folder_name(fid), "state": state.tag(), "completion": completion,
+                "folder": local_folder_name(&folders, fid), "folderId": fid,
+                "state": state.tag(), "completion": completion,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "pending": pending.iter().map(|(pid, info)| json!({
